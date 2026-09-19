@@ -19,7 +19,9 @@ export function createXaiProvider(config: XaiConfig): AIProvider {
       },
       body: JSON.stringify({
         model,
-        temperature: 0.7,
+        temperature: 1.15,
+        presence_penalty: 0.7,
+        frequency_penalty: 0.45,
         max_tokens: config.maxTokens ?? 220,
         messages: [
           { role: "system", content: system },

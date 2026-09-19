@@ -1,7 +1,7 @@
-import { createRng, type Rng } from "@/game/rng.ts";
+import { createRng, freshEntropySeed, type Rng } from "@/game/rng.ts";
 import { randomId } from "@/game/ids.ts";
 import { generatePersonality, HUMAN_DEFAULT_NAME, pickNpcNames } from "@/game/names.ts";
-import { emptyMemory } from "@/ai/memory.ts";
+import { emptyMemory, seedNpcMinds } from "@/ai/memory.ts";
 import { factionFor, getRole } from "@/roles/index.ts";
 import {
   DEFAULT_SETTINGS,
@@ -152,7 +152,11 @@ export function classicRoles(playerCount: PlayerCount): RoleId[] {
 }
 
 function chaosRoles(playerCount: PlayerCount, rng: Rng): RoleId[] {
-  const wolves = wolfCountFor(playerCount);
+  let wolves = wolfCountFor(playerCount);
+  if (rng.chance(30) && wolves > 1) wolves -= 1;
+  else if (rng.chance(24) && wolves < Math.min(4, Math.floor(playerCount / 3)) && playerCount >= 10) {
+    wolves += 1;
+  }
   const roles: RoleId[] = Array.from({ length: wolves }, () => "werewolf");
   const remaining = playerCount - wolves;
 
@@ -164,15 +168,17 @@ function chaosRoles(playerCount: PlayerCount, rng: Rng): RoleId[] {
     "tanner",
     "cupid",
   ];
-  if (playerCount >= 11) optionalPool.push("serialKiller");
-  if (playerCount >= 12) optionalPool.push("cultist");
-  if (playerCount >= 14 && rng.chance(40)) optionalPool.push("cultist");
+  if (playerCount >= 10) optionalPool.push("serialKiller");
+  if (playerCount >= 11) optionalPool.push("cultist");
+  if (playerCount >= 13 && rng.chance(45)) optionalPool.push("cultist");
+  if (rng.chance(18)) optionalPool.push("hunter");
+  if (rng.chance(18)) optionalPool.push("tanner");
 
   const shuffledOptional = rng.shuffle(optionalPool);
   const specials: RoleId[] = [...required];
   const specialBudget = Math.min(
     remaining - 2,
-    2 + rng.intInclusive(1, Math.max(1, Math.floor(playerCount / 4))),
+    1 + rng.intInclusive(1, Math.max(2, Math.floor(playerCount / 3))),
   );
   for (const role of shuffledOptional) {
     if (specials.length >= specialBudget) break;
@@ -184,6 +190,28 @@ function chaosRoles(playerCount: PlayerCount, rng: Rng): RoleId[] {
   roles.push(...specials);
   while (roles.length < playerCount) roles.push("villager");
   if (roles.length > playerCount) roles.length = playerCount;
+  return roles;
+}
+
+/** Classic tables stay legal, but 0–3 villagers can become unused specials. */
+function spiceClassicRoles(playerCount: PlayerCount, rng: Rng): RoleId[] {
+  const roles = classicRoles(playerCount);
+  const present = new Set(roles);
+  const extras: RoleId[] = ["tanner", "fool", "cupid", "hunter", "guardianAngel"];
+  if (playerCount >= 10) extras.push("serialKiller");
+  if (playerCount >= 12) extras.push("cultist");
+  const unused = rng.shuffle(extras.filter((r) => !present.has(r)));
+  const swaps = rng.intInclusive(0, Math.min(3, unused.length));
+  let extraIdx = 0;
+  for (let s = 0; s < swaps; s++) {
+    const villagerIdx = roles.findIndex((r) => r === "villager");
+    if (villagerIdx < 0 || extraIdx >= unused.length) break;
+    const candidate = roles.slice();
+    candidate[villagerIdx] = unused[extraIdx++]!;
+    if (validateRoleDistribution(candidate, "classic").length === 0) {
+      roles[villagerIdx] = candidate[villagerIdx]!;
+    }
+  }
   return roles;
 }
 
@@ -292,12 +320,11 @@ export function assignRoles(
   }
 
   if (mode === "classic") {
-    const roles = classicRoles(playerCount);
+    const roles = spiceClassicRoles(playerCount, rng);
     const issues = validateRoleDistribution(roles, mode);
     if (issues.length) {
-      throw new Error(
-        `Classic table invalid for ${playerCount}: ${issues.map((i) => i.message).join(" ")}`,
-      );
+      const fallback = classicRoles(playerCount);
+      return rng.shuffle(fallback);
     }
     return rng.shuffle(roles);
   }
@@ -354,8 +381,10 @@ export function createGame(options: CreateGameOptions = {}): GameState {
     throw new Error(`Unsupported player count ${playerCount}`);
   }
   const mode = options.mode ?? "classic";
-  const seed = options.seed ?? randomId("seed");
+  const seeded = options.seed != null;
+  const seed = options.seed ?? freshEntropySeed();
   const rng = createRng(seed);
+  if (!seeded) rng.mixEntropy();
   const settings: GameSettings = {
     ...DEFAULT_SETTINGS,
     ...options.settings,
@@ -364,12 +393,18 @@ export function createGame(options: CreateGameOptions = {}): GameState {
   };
 
   const roles = assignRoles(playerCount, mode, rng, options.forcedRoles);
+  if (!options.forcedRoles) {
+    const reshuffled = rng.shuffle(roles);
+    roles.length = 0;
+    roles.push(...reshuffled);
+  }
   const npcNames =
     options.forcedNpcNames ?? pickNpcNames(playerCount - 1, rng);
   if (npcNames.length !== playerCount - 1) {
     throw new Error("NPC name count mismatch");
   }
 
+  const takenMinds = new Set<string>();
   const humanName = (options.humanName ?? HUMAN_DEFAULT_NAME).trim() || HUMAN_DEFAULT_NAME;
   const players: PlayerState[] = [];
   players.push(
@@ -378,7 +413,7 @@ export function createGame(options: CreateGameOptions = {}): GameState {
       humanName,
       true,
       roles[0] as RoleId,
-      generatePersonality(humanName, rng),
+      generatePersonality(humanName, rng, takenMinds),
       options.humanTelegramId ?? null,
     ),
   );
@@ -390,7 +425,7 @@ export function createGame(options: CreateGameOptions = {}): GameState {
         name,
         false,
         roles[i + 1] as RoleId,
-        generatePersonality(name, rng),
+        generatePersonality(name, rng, takenMinds),
         null,
       ),
     );
@@ -401,6 +436,7 @@ export function createGame(options: CreateGameOptions = {}): GameState {
     memories[p.id] = emptyMemory(
       p.id,
       players.filter((o) => o.id !== p.id).map((o) => o.id),
+      rng,
     );
   }
 
@@ -432,6 +468,8 @@ export function createGame(options: CreateGameOptions = {}): GameState {
     lastHumanStatement: null,
     version: 1,
   };
+  seedNpcMinds(state, rng);
+  state.rngState = rng.getState();
   return state;
 }
 

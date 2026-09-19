@@ -104,6 +104,7 @@ export interface Personality {
   seedName: string;
   traits: string[];
   speakingStyle: string;
+  agenda: string;
   riskTolerance: number;
   deception: number;
   aggression: number;
@@ -142,6 +143,9 @@ export interface NpcMemory {
   }>;
   voteHistory: Array<{ day: number; targetId: string }>;
   intendedVoteId: string | null;
+  privateHunch: string;
+  hunchTargetId: string | null;
+  saidFingerprints: string[];
 }
 
 export interface InvestigationResult {

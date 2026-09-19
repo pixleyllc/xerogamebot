@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { createGame } from "@/game/setup.ts";
+import { freshEntropySeed } from "@/game/rng.ts";
 import { applyEngineAction, startGame } from "@/game/engine.ts";
 import { buildPrivateView } from "@/game/isolation.ts";
 import { fallbackProvider } from "@/ai/fallback.ts";
@@ -88,7 +89,7 @@ export const useGameStore = create<GameStore>()(
       error: null,
       humanName: "Zack",
       playerCount: 10,
-      mode: "classic",
+      mode: "chaos",
       useLlm: true,
       sidePanel: "none",
       composer: "",
@@ -113,6 +114,7 @@ export const useGameStore = create<GameStore>()(
             humanName: humanName.trim() || "Zack",
             playerCount,
             mode,
+            seed: freshEntropySeed(),
           });
           working = startGame(working).state;
           set({ screen: "table", ...snapshot(working), busy: true, sidePanel: "none" });

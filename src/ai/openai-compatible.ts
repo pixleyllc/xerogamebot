@@ -20,7 +20,9 @@ export function createOpenAiCompatibleProvider(
       },
       body: JSON.stringify({
         model: config.model,
-        temperature: 0.7,
+        temperature: 1.1,
+        presence_penalty: 0.65,
+        frequency_penalty: 0.4,
         max_tokens: config.maxTokens ?? 220,
         messages: [
           { role: "system", content: system },

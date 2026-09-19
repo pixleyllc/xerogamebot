@@ -22,6 +22,12 @@ export const NPC_NAME_POOL = [
   "Theo",
   "Camila",
   "Jules",
+  "Rae",
+  "Quinn",
+  "Noor",
+  "Soren",
+  "Pilar",
+  "Ellis",
 ] as const;
 
 const TRAIT_POOLS = {
@@ -34,6 +40,10 @@ const TRAIT_POOLS = {
     "earnest",
     "restless",
     "quiet",
+    "needling",
+    "blunt",
+    "theatrical",
+    "detached",
   ],
   method: [
     "analytical",
@@ -44,6 +54,10 @@ const TRAIT_POOLS = {
     "pattern-watching",
     "empathetic",
     "confrontational",
+    "scattershot",
+    "lawyerly",
+    "gut-first",
+    "quiet-hunter",
   ],
   tell: [
     "jokes under pressure",
@@ -54,6 +68,10 @@ const TRAIT_POOLS = {
     "changes targets often",
     "mirrors the last speaker",
     "speaks in short verdicts",
+    "over-explains tiny facts",
+    "names people like a roll call",
+    "hedges then snaps shut",
+    "sounds bored on purpose",
   ],
 };
 
@@ -66,82 +84,76 @@ const STYLE_TEMPLATES = [
   "Quiet and clipped. Speaks only when sure.",
   "Warm and persuasive, frames everything as concern.",
   "Lawyerly. Points at voting history.",
+  "Rambling then suddenly specific.",
+  "Deadpan. Treats the table like a joke that stopped being funny.",
+  "Fast and impatient. Cuts people off in text.",
+  "Poetic in a way that still names a suspect.",
+  "Asks questions instead of making claims.",
+  "Sounds like they already voted in their head.",
+  "Country-plain. No flourish. A name and a reason.",
+  "Slightly paranoid, stacks 'what if' on 'what if'.",
+];
+
+const AGENDAS = [
+  "Play loud so nobody looks at you twice.",
+  "Stay quiet until someone names you, then over-explain.",
+  "Pick a scapegoat early and never let go.",
+  "Mirror whoever sounds village-y and ride their reads.",
+  "Ask trap questions instead of making claims.",
+  "Defend the first person accused, then pivot.",
+  "Only talk in votes and numbers.",
+  "Act offended by every accusation.",
+  "Pretend you noticed a night inconsistency.",
+  "Hunt whoever talks after deaths.",
+  "Bond with one player and follow their vote.",
+  "Contrarian: if the table agrees, you don't.",
+  "Protect a random 'soft' player as if they were seer.",
+  "Dump your first read halfway through and swap.",
+  "Sound like you have extra info you refuse to share.",
+  "Keep naming the human just to see who jumps in.",
 ];
 
 function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
-function jitter(rng: Rng, base: number, spread = 0.25): number {
+function jitter(rng: Rng, base: number, spread = 0.28): number {
   return clamp01(base + (rng.next() - 0.5) * 2 * spread);
 }
 
-export function generatePersonality(name: string, rng: Rng): Personality {
-  const demeanor = rng.pick(TRAIT_POOLS.demeanor);
-  const method = rng.pick(TRAIT_POOLS.method);
-  const tell = rng.pick(TRAIT_POOLS.tell);
-  const namedBias: Partial<Personality> = {};
-
-  switch (name) {
-    case "Luna":
-      namedBias.analytical = 0.85;
-      namedBias.aggression = 0.25;
-      namedBias.trustTendency = 0.35;
-      break;
-    case "Mateo":
-      namedBias.aggression = 0.86;
-      namedBias.deception = 0.45;
-      namedBias.riskTolerance = 0.7;
-      break;
-    case "Sofia":
-      namedBias.trustTendency = 0.7;
-      namedBias.analytical = 0.6;
-      namedBias.aggression = 0.3;
-      break;
-    case "Diego":
-      namedBias.riskTolerance = 0.88;
-      namedBias.deception = 0.4;
-      namedBias.aggression = 0.55;
-      break;
-    case "Valeria":
-      namedBias.analytical = 0.9;
-      namedBias.aggression = 0.2;
-      namedBias.memoryStrength = 0.92;
-      break;
-    case "Carlos":
-      namedBias.aggression = 0.8;
-      namedBias.trustTendency = 0.25;
-      namedBias.deception = 0.35;
-      break;
-    case "Mia":
-      namedBias.deception = 0.78;
-      namedBias.trustTendency = 0.65;
-      namedBias.aggression = 0.4;
-      break;
-    case "Alex":
-      namedBias.analytical = 0.92;
-      namedBias.memoryStrength = 0.85;
-      namedBias.aggression = 0.35;
-      break;
-    case "Emma":
-      namedBias.trustTendency = 0.8;
-      namedBias.riskTolerance = 0.25;
-      namedBias.aggression = 0.22;
-      break;
-    default:
-      break;
+export function generatePersonality(
+  name: string,
+  rng: Rng,
+  taken: Set<string> = new Set(),
+): Personality {
+  let demeanor = rng.pick(TRAIT_POOLS.demeanor);
+  let method = rng.pick(TRAIT_POOLS.method);
+  let tell = rng.pick(TRAIT_POOLS.tell);
+  let speakingStyle = rng.pick(STYLE_TEMPLATES);
+  let agenda = rng.pick(AGENDAS);
+  let guard = 0;
+  let key = `${speakingStyle}|${agenda}|${method}`;
+  while (taken.has(key) && guard++ < 24) {
+    speakingStyle = rng.pick(STYLE_TEMPLATES);
+    agenda = rng.pick(AGENDAS);
+    method = rng.pick(TRAIT_POOLS.method);
+    demeanor = rng.pick(TRAIT_POOLS.demeanor);
+    tell = rng.pick(TRAIT_POOLS.tell);
+    key = `${speakingStyle}|${agenda}|${method}`;
   }
+  taken.add(key);
 
   return {
     seedName: name,
     traits: [demeanor, method, tell],
-    speakingStyle: rng.pick(STYLE_TEMPLATES),
-    riskTolerance: jitter(rng, namedBias.riskTolerance ?? rng.next()),
-    deception: jitter(rng, namedBias.deception ?? rng.next() * 0.7),
-    aggression: jitter(rng, namedBias.aggression ?? rng.next()),
-    trustTendency: jitter(rng, namedBias.trustTendency ?? rng.next()),
-    analytical: jitter(rng, namedBias.analytical ?? rng.next()),
-    memoryStrength: jitter(rng, namedBias.memoryStrength ?? 0.45 + rng.next() * 0.5),
+    speakingStyle,
+    agenda,
+    riskTolerance: jitter(rng, rng.next()),
+    deception: jitter(rng, rng.next() * 0.85),
+    aggression: jitter(rng, rng.next()),
+    trustTendency: jitter(rng, rng.next()),
+    analytical: jitter(rng, rng.next()),
+    memoryStrength: jitter(rng, 0.35 + rng.next() * 0.6, 0.18),
   };
 }
 

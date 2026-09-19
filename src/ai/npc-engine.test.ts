@@ -12,6 +12,16 @@ describe("driveNpcsUntilHuman", () => {
       mode: "classic",
       seed: "stay-at-table",
       humanName: "Zack",
+      forcedRoles: [
+        "villager",
+        "werewolf",
+        "seer",
+        "guardianAngel",
+        "hunter",
+        "villager",
+        "villager",
+        "villager",
+      ],
     });
     state = startGame(state).state;
     state = await driveNpcsUntilHuman(state, { provider: fallbackProvider });
@@ -42,6 +52,16 @@ describe("driveNpcsUntilHuman", () => {
       mode: "classic",
       seed: "full-day",
       humanName: "Zack",
+      forcedRoles: [
+        "villager",
+        "werewolf",
+        "seer",
+        "guardianAngel",
+        "hunter",
+        "villager",
+        "villager",
+        "villager",
+      ],
     });
     state = startGame(state).state;
     state = await driveNpcsUntilHuman(state, { provider: fallbackProvider });

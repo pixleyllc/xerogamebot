@@ -22,12 +22,13 @@ describe("role assignment", () => {
     });
   }
 
-  it("shuffles without changing the multiset", () => {
+  it("shuffles without losing the wolf count", () => {
     const rng = createRng("seed-a");
     const a = assignRoles(10, "classic", rng);
-    a.sort();
-    const expected = classicRoles(10).slice().sort();
-    assert.deepEqual(a, expected);
+    assert.equal(a.length, 10);
+    assert.equal(a.filter((r) => r === "werewolf").length, wolfCountFor(10));
+    assert.equal(validateRoleDistribution(a, "classic").length, 0);
+    assert.ok(a.includes("seer"));
   });
 
   it("chaos always validates", () => {

@@ -9,12 +9,12 @@ const MODES: Array<{ id: GameMode; title: string; body: string }> = [
   {
     id: "classic",
     title: "Classic",
-    body: "Balanced village table. Wolf count follows the original bot: one wolf per five players.",
+    body: "Balanced village bones, then a random spice — who gets what is a fresh shuffle every table.",
   },
   {
     id: "chaos",
     title: "Chaos",
-    body: "A legal but unruly mix. Tanner, Fool, Cupid, Cult, and Serial Killer can all crash the same game.",
+    body: "A legal but unruly mix. Role set, seating, and every NPC mind are redrawn from scratch.",
   },
 ];
 

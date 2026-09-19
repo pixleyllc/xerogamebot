@@ -1,7 +1,9 @@
 import { fallbackProvider, safeDecision } from "@/ai/fallback.ts";
-import type { AIProvider, AiDecisionRequest } from "@/ai/provider.ts";
+import type { AIProvider, AiDecisionKind, AiDecisionRequest } from "@/ai/provider.ts";
 import { bumpBelief, pruneMemory, recordAccusation } from "@/ai/memory.ts";
+import { pickAngle, uniqueNonce, fingerprint } from "@/ai/spice.ts";
 import { buildPrivateView } from "@/game/isolation.ts";
+import { withGameRng } from "@/game/rng.ts";
 import {
   applyEngineAction,
   hunterNeedingShot,
@@ -21,6 +23,32 @@ function speakerScore(p: PlayerState): number {
   return p.personality.aggression * 0.5 + p.personality.analytical * 0.25 + 0.1;
 }
 
+function pickSpeakers(state: GameState, pool: PlayerState[], max: number): PlayerState[] {
+  if (pool.length <= max) {
+    return withGameRng(state, (rng) => rng.shuffle(pool));
+  }
+  return withGameRng(state, (rng) => {
+    if (rng.chance(35)) {
+      const ranked = pool.slice().sort((a, b) => speakerScore(b) - speakerScore(a));
+      const head = ranked.slice(0, Math.max(1, Math.floor(max / 2)));
+      const rest = rng.shuffle(ranked.slice(head.length)).slice(0, max - head.length);
+      return rng.shuffle([...head, ...rest]);
+    }
+    return rng.shuffle(pool).slice(0, max);
+  });
+}
+
+function pickKind(state: GameState, actor: PlayerState): AiDecisionKind {
+  return withGameRng(state, (rng) => {
+    const last = state.lastHumanStatement?.toLowerCase() ?? "";
+    if (last.includes(actor.name.toLowerCase())) return "defense";
+    const roll = rng.next();
+    if (roll < 0.32) return "accusation";
+    if (roll < 0.44) return "defense";
+    return "discussion";
+  });
+}
+
 function emptyResult(state: GameState): EngineResult {
   return { state, privateMessages: [], publicMessages: [], errors: [] };
 }
@@ -36,22 +64,31 @@ export async function runNpcNight(state: GameState, provider: AIProvider): Promi
       kind: "night",
       view,
       validTargets: valid,
+      entropyNonce: uniqueNonce(),
     };
     const decision = await safeDecision(provider, req).catch(() =>
       fallbackProvider.generateNightAction(req),
     );
     if (actor.roleId === "cupid") {
+      const t1 = decision.targetId ?? valid[Math.floor(Math.random() * valid.length)];
+      const rest = valid.filter((id) => id !== t1);
       latest = applyEngineAction(latest.state, {
         type: "nightCupid",
         actorId: actor.id,
-        targetId: decision.targetId ?? valid[0],
-        target2Id: decision.target2Id ?? valid.find((id) => id !== decision.targetId),
+        targetId: t1,
+        target2Id: decision.target2Id ?? rest[Math.floor(Math.random() * rest.length)],
       });
     } else if (decision.targetId) {
       latest = applyEngineAction(latest.state, {
         type: "nightTarget",
         actorId: actor.id,
         targetId: decision.targetId,
+      });
+    } else if (valid.length) {
+      latest = applyEngineAction(latest.state, {
+        type: "nightTarget",
+        actorId: actor.id,
+        targetId: valid[Math.floor(Math.random() * valid.length)]!,
       });
     } else {
       latest = applyEngineAction(latest.state, { type: "skip", actorId: actor.id });
@@ -67,13 +104,13 @@ export async function runNpcVotes(state: GameState, provider: AIProvider): Promi
     if (latest.state.phase !== "voting") break;
     const view = buildPrivateView(latest.state, actor.id);
     const valid = validVoteTargets(latest.state, actor.id);
-    const req: AiDecisionRequest = { kind: "vote", view, validTargets: valid };
+    const req: AiDecisionRequest = { kind: "vote", view, validTargets: valid, entropyNonce: uniqueNonce() };
     const decision = await safeDecision(provider, req).catch(() =>
       fallbackProvider.generateVote(req),
     );
     const target =
       (decision.targetId && valid.includes(decision.targetId) && decision.targetId) ||
-      valid[0];
+      (valid.length ? valid[Math.floor(Math.random() * valid.length)] : undefined);
     if (target) {
       latest = applyEngineAction(latest.state, {
         type: "vote",
@@ -92,11 +129,16 @@ export async function runNpcHunter(state: GameState, provider: AIProvider): Prom
   const valid = livingPlayers(state)
     .filter((p) => p.id !== hunter.id)
     .map((p) => p.id);
-  const req: AiDecisionRequest = { kind: "hunterShot", view, validTargets: valid };
+  const req: AiDecisionRequest = { kind: "hunterShot", view, validTargets: valid, entropyNonce: uniqueNonce() };
   const decision = await safeDecision(provider, req).catch(() =>
     fallbackProvider.generatePlayerDecision(req),
   );
-  const target = decision.targetId && valid.includes(decision.targetId) ? decision.targetId : valid[0];
+  const target =
+    decision.targetId && valid.includes(decision.targetId)
+      ? decision.targetId
+      : valid.length
+        ? valid[Math.floor(Math.random() * valid.length)]
+        : undefined;
   if (!target) return emptyResult(state);
   return applyEngineAction(state, {
     type: "hunterShot",
@@ -113,8 +155,7 @@ export async function runNpcDiscussion(
   const max = options.maxSpeakers ?? state.settings.maxDiscussionMessages;
   const already = new Set(state.discussionPlan);
   const living = livingPlayers(state).filter((p) => !p.isHuman && !already.has(p.id));
-  const ranked = living.slice().sort((a, b) => speakerScore(b) - speakerScore(a));
-  const speakers = ranked.slice(0, Math.min(max, ranked.length));
+  const speakers = pickSpeakers(state, living, Math.min(max, living.length));
   let latest = emptyResult(state);
   for (const actor of speakers) {
     if (latest.state.phase !== "discussion") break;
@@ -122,18 +163,17 @@ export async function runNpcDiscussion(
     const valid = livingPlayers(latest.state)
       .filter((p) => p.id !== actor.id)
       .map((p) => p.id);
-    const kind =
-      actor.personality.aggression > 0.7
-        ? "accusation"
-        : latest.state.lastHumanStatement &&
-            latest.state.lastHumanStatement.toLowerCase().includes(actor.name.toLowerCase())
-          ? "defense"
-          : "discussion";
+    const kind = pickKind(latest.state, actor);
+    const angle = withGameRng(latest.state, (rng) =>
+      pickAngle(rng, latest.state.chat.map((m) => m.text).join(" ")),
+    );
     const req: AiDecisionRequest = {
       kind,
       view,
       validTargets: valid,
       recentHumanStatement: latest.state.lastHumanStatement,
+      entropyNonce: uniqueNonce(),
+      angle,
     };
     const decision = await safeDecision(provider, req).catch(() =>
       fallbackProvider.generatePlayerDialogue(req),
@@ -144,6 +184,13 @@ export async function runNpcDiscussion(
       actorId: actor.id,
       text,
     });
+    const memAfter = latest.state.memories[actor.id];
+    if (memAfter) {
+      memAfter.saidFingerprints = [
+        ...(memAfter.saidFingerprints ?? []),
+        fingerprint(text),
+      ].slice(-24);
+    }
     latest.state.discussionPlan = [...latest.state.discussionPlan, actor.id];
     latest.state.discussionIndex = latest.state.discussionPlan.length;
     if (decision.accusationTargetId) {

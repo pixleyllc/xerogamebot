@@ -1,5 +1,7 @@
 import type { AIProvider, AiDecision, AiDecisionRequest } from "@/ai/provider.ts";
 import { defaultDecision } from "@/ai/provider.ts";
+import { fingerprint, saidFingerprints } from "@/ai/spice.ts";
+import { createRng, freshEntropySeed, type Rng } from "@/game/rng.ts";
 import type { NpcMemory, PlayerView } from "@/game/types.ts";
 
 function nameOf(view: PlayerView, id: string): string {
@@ -10,34 +12,8 @@ function livingOthers(view: PlayerView): string[] {
   return view.players.filter((p) => p.isAlive && p.id !== view.viewerId).map((p) => p.id);
 }
 
-function mostSuspicious(view: PlayerView, valid: string[]): string | null {
-  const mem = view.memory;
-  if (!mem) return valid[0] ?? null;
-  let bestId: string | null = null;
-  let best = -1;
-  for (const id of valid) {
-    const score = mem.beliefs[id] ?? 0.35;
-    if (score > best) {
-      best = score;
-      bestId = id;
-    }
-  }
-  return bestId;
-}
-
-function leastSuspicious(view: PlayerView, valid: string[]): string | null {
-  const mem = view.memory;
-  if (!mem) return valid[0] ?? null;
-  let bestId: string | null = null;
-  let best = 99;
-  for (const id of valid) {
-    const score = mem.beliefs[id] ?? 0.35;
-    if (score < best) {
-      best = score;
-      bestId = id;
-    }
-  }
-  return bestId;
+function scratchRng(): Rng {
+  return createRng(freshEntropySeed());
 }
 
 function wolfLike(view: PlayerView): boolean {
@@ -56,107 +32,221 @@ function tannerLike(view: PlayerView): boolean {
   return view.shownRoleId === "tanner";
 }
 
+function scoresFor(view: PlayerView, valid: string[], invert = false): number[] {
+  const mem = view.memory;
+  return valid.map((id) => {
+    const belief = mem?.beliefs[id] ?? 0.35;
+    const trust = mem?.trust[id] ?? 0.5;
+    const hunchBoost = mem?.hunchTargetId === id ? 0.18 : 0;
+    const raw = belief + hunchBoost - trust * 0.15 + Math.random() * 0.08;
+    return invert ? 1 - raw : raw;
+  });
+}
+
+export function pickAmong(view: PlayerView, valid: string[], prefer: "hot" | "cold" | "mix"): string | null {
+  if (!valid.length) return null;
+  const rng = scratchRng();
+  const p = view.personality;
+  const temp = prefer === "mix" ? 0.55 : 0.18 + (1 - (p?.analytical ?? 0.5)) * 0.55;
+  const invert = prefer === "cold";
+  const scores = scoresFor(view, valid, invert);
+  if (prefer === "mix") {
+    return rng.pick(valid);
+  }
+  try {
+    return rng.softmaxPick(valid, scores, temp);
+  } catch {
+    return rng.pick(valid);
+  }
+}
+
 function pickNightTarget(req: AiDecisionRequest): { t1: string | null; t2: string | null } {
   const view = req.view;
   const valid = req.validTargets;
   if (!valid.length) return { t1: null, t2: null };
   const role = view.shownRoleId;
+  const rng = scratchRng();
   if (role === "werewolf" || role === "serialKiller") {
-    return { t1: leastSuspicious(view, valid) ?? valid[0]!, t2: null };
+    const hunt = pickAmong(view, valid, rng.chance(55) ? "cold" : "mix") ?? rng.pick(valid);
+    return { t1: hunt, t2: null };
   }
-  if (role === "seer") {
-    return { t1: mostSuspicious(view, valid) ?? valid[0]!, t2: null };
+  if (role === "seer" || role === "fool") {
+    return { t1: pickAmong(view, valid, rng.chance(70) ? "hot" : "mix") ?? rng.pick(valid), t2: null };
   }
   if (role === "guardianAngel") {
     const selfAllies = [
       ...view.packMates.map((p) => p.id),
       view.loverId,
     ].filter((id): id is string => !!id && valid.includes(id));
-    if (view.investigations.some((i) => i.shownRoleId === "werewolf")) {
-      const seerSelf = valid.includes(view.viewerId) ? view.viewerId : null;
-      return { t1: selfAllies[0] ?? leastSuspicious(view, valid) ?? seerSelf ?? valid[0]!, t2: null };
-    }
-    return { t1: leastSuspicious(view, valid) ?? valid[0]!, t2: null };
+    if (selfAllies.length && rng.chance(40)) return { t1: rng.pick(selfAllies), t2: null };
+    return { t1: pickAmong(view, valid, rng.chance(50) ? "cold" : "mix") ?? rng.pick(valid), t2: null };
   }
   if (role === "cultist") {
-    return { t1: mostSuspicious(view, valid) ?? valid[0]!, t2: null };
+    return { t1: pickAmong(view, valid, "mix") ?? rng.pick(valid), t2: null };
   }
   if (role === "cupid") {
-    const a = valid[0] ?? null;
-    const b = valid.find((id) => id !== a) ?? null;
-    return { t1: a, t2: b };
+    const shuffled = rng.shuffle(valid);
+    return { t1: shuffled[0] ?? null, t2: shuffled[1] ?? null };
   }
-  return { t1: valid[0] ?? null, t2: valid[1] ?? null };
+  const shuffled = rng.shuffle(valid);
+  return { t1: shuffled[0] ?? null, t2: shuffled[1] ?? null };
 }
 
-function speak(view: PlayerView, targetId: string | null): string {
-  const p = view.personality;
-  const target = targetId ? nameOf(view, targetId) : "someone";
-  const aggression = p?.aggression ?? 0.4;
-  const analytical = p?.analytical ?? 0.4;
+const HOOKS: Array<(n: string) => string> = [
+  (n) => `${n} is the name stuck in my teeth.`,
+  (n) => `Why is ${n} so comfortable right now?`,
+  (n) => `I keep waiting for ${n} to actually say something.`,
+  (n) => `${n} jumped in too fast. That's a tell or a panic.`,
+  (n) => `If we lynch wrong, it's because we ignored ${n}.`,
+  (n) => `${n} feels like they already picked a story.`,
+  (n) => `Don't look at me — look at ${n}.`,
+  (n) => `${n} hasn't been pressured once. That's the problem.`,
+  (n) => `I want ${n} on the block just to hear the defense.`,
+  (n) => `${n} is playing like the night didn't happen.`,
+  (n) => `Somebody explain ${n} to me in one sentence.`,
+  (n) => `My gut is ${n}. I might dump it. Not yet.`,
+  (n) => `${n} and whoever defends them first — that's a pair.`,
+  (n) => `Quiet table. Loudest silence is ${n}.`,
+  (n) => `I don't need a speech. I need ${n} to answer.`,
+  (n) => `${n} sounds village in a way that was practiced.`,
+  (n) => `Vote math hates ${n} more than the flavor text does.`,
+  (n) => `${n} is my second choice, which is why I'm saying it first.`,
+  (n) => `I'm not claiming anything. I'm pointing at ${n}.`,
+  (n) => `${n} talked around the death instead of through it.`,
+  (n) => `If ${n} is village, they should want a different name than that.`,
+  (n) => `I slept on ${n} and woke up still annoyed.`,
+  (n) => `${n} is fishing for a wagon. Don't give it.`,
+  (n) => `Put ${n} up. If I'm wrong, I'll eat it tomorrow.`,
+  (n) => `${n} keeps redirecting. That's not how clean people talk.`,
+];
+
+const QUESTIONS: Array<(n: string) => string> = [
+  (n) => `${n} — who did you want dead last night, honestly?`,
+  (n) => `${n}, if you had a night action, did you use it? Yes or no.`,
+  (n) => `Why shouldn't we vote ${n} right now? One reason.`,
+  (n) => `${n}, pick a name that isn't me. Let's see who you throw.`,
+  (n) => `Did anyone actually hear ${n} make a read, or just vibes?`,
+];
+
+const DEFLECTIONS: Array<(n: string) => string> = [
+  (n) => `Leave me. The day is about ${n}.`,
+  (n) => `That's a cute spin. Still ${n}.`,
+  (n) => `You want me? Fine. Wagon ${n} anyway.`,
+  (n) => `I'm not the puzzle. ${n} is.`,
+];
+
+function composeLine(view: PlayerView, targetId: string | null, rng: Rng): string {
+  const others = view.players.filter((p) => p.isAlive && p.id !== view.viewerId);
+  const target = targetId
+    ? nameOf(view, targetId)
+    : others.length
+      ? rng.pick(others).name
+      : "someone";
+  const style = (view.personality?.speakingStyle ?? "").toLowerCase();
+  const aggression = view.personality?.aggression ?? rng.next();
+  const used = saidFingerprints(view);
+
+  const builders: Array<() => string> = [];
   if (tannerLike(view)) {
-    return aggression > 0.6
-      ? `Honestly? Vote me if you want a clean answer. ${target} has been louder than useful.`
-      : `I'm not hiding. If the village wants a name, start with ${target} — but don't pretend I look wolfy.`;
+    builders.push(
+      () => rng.pick([
+        `Hang me if you want a clean answer. ${target} has been louder than useful.`,
+        `I'm not hiding. Start with ${target} — or start with me and waste a day.`,
+        `If the village needs a body, I'm standing here. ${target} still smells worse.`,
+        `Vote me. I'm done performing. ${target} can enjoy the extra day.`,
+      ]),
+    );
   }
   if (wolfLike(view) || skLike(view) || cultLike(view)) {
-    return aggression > 0.55
-      ? `${target} has been steering this table. That's not how a villager talks when they're clean.`
-      : `I keep coming back to ${target}. The votes around them don't add up.`;
+    builders.push(
+      () => rng.pick([
+        `${target} has been steering. Villagers don't drive this hard when they're clean.`,
+        `I keep coming back to ${target}. The timing is ugly.`,
+        `Don't let ${target} narrate us into a nothing day.`,
+        `${target} is doing the 'helpful village' bit too early.`,
+      ]),
+    );
   }
-  if (analytical > 0.6) {
-    return `${target} is the loudest pattern I have: yesterday's vote plus tonight's death don't clear them.`;
+  builders.push(() => rng.pick(HOOKS)(target));
+  builders.push(() => rng.pick(QUESTIONS)(target));
+  if (aggression > 0.55) builders.push(() => rng.pick(DEFLECTIONS)(target));
+
+  if (style.includes("question")) {
+    builders.push(() => rng.pick(QUESTIONS)(target));
   }
-  if (aggression > 0.65) {
-    return `I'm putting ${target} up. If you're village, you vote with me.`;
+  if (style.includes("short") || style.includes("clipped") || style.includes("deadpan")) {
+    builders.push(() => `${target}. That's the vote.`);
+    builders.push(() => `Name's ${target}. I'm not writing an essay.`);
   }
-  return `I don't love how ${target} has been playing. We should talk about them before we lock a vote.`;
+  if (style.includes("lawyer") || style.includes("vote")) {
+    builders.push(() => `Count the wagons. ${target} is the only name that actually moves.`);
+  }
+  if (style.includes("warm") || style.includes("concern")) {
+    builders.push(() => `I'm worried about ${target}. That's not an attack, it's the read.`);
+  }
+
+  for (let i = 0; i < 18; i++) {
+    const line = rng.pick(builders)().trim();
+    const fp = fingerprint(line);
+    if (!used.has(fp) && line.length > 8) return line;
+  }
+  return rng.pick(HOOKS)(target);
 }
 
 function voteTarget(view: PlayerView, valid: string[]): string | null {
-  if (view.memory?.intendedVoteId && valid.includes(view.memory.intendedVoteId)) {
+  if (!valid.length) return null;
+  const rng = scratchRng();
+  if (view.memory?.intendedVoteId && valid.includes(view.memory.intendedVoteId) && rng.chance(55)) {
     return view.memory.intendedVoteId;
   }
-  if (tannerLike(view)) {
-    return mostSuspicious(view, valid);
+  if (view.memory?.hunchTargetId && valid.includes(view.memory.hunchTargetId) && rng.chance(40)) {
+    return view.memory.hunchTargetId;
   }
-  if (wolfLike(view) || skLike(view)) {
-    return mostSuspicious(view, valid);
-  }
-  return mostSuspicious(view, valid);
+  const prefer = tannerLike(view)
+    ? rng.chance(35)
+      ? "mix"
+      : "hot"
+    : rng.chance(22)
+      ? "mix"
+      : "hot";
+  return pickAmong(view, valid, prefer) ?? rng.pick(valid);
 }
 
 export const fallbackProvider: AIProvider = {
   id: "fallback",
   async generatePlayerDecision(req) {
     if (req.kind === "vote") return this.generateVote(req);
-    if (req.kind === "night") return this.generateNightAction(req);
+    if (req.kind === "night" || req.kind === "hunterShot") return this.generateNightAction(req);
     return this.generatePlayerDialogue(req);
   },
   async generatePlayerDialogue(req) {
+    const rng = scratchRng();
     const valid = req.validTargets.length ? req.validTargets : livingOthers(req.view);
-    const target = mostSuspicious(req.view, valid);
-    const text = speak(req.view, target);
+    const prefer = req.kind === "defense" ? "mix" : rng.chance(30) ? "mix" : "hot";
+    const target = pickAmong(req.view, valid, prefer);
+    const text = composeLine(req.view, target, rng);
+    const mem = req.view.memory;
+    if (mem) mem.saidFingerprints = [...(mem.saidFingerprints ?? []), fingerprint(text)].slice(-24);
     return {
       action: "speak",
       text,
       targetId: target,
       target2Id: null,
-      confidence: 0.55,
-      reasoningSummary: "Heuristic read from suspicion scores.",
+      confidence: 0.42 + rng.next() * 0.4,
+      reasoningSummary: req.view.memory?.privateHunch ?? "Private read.",
       intendedVoteId: target,
-      accusationTargetId: target,
+      accusationTargetId: req.kind === "accusation" || rng.chance(60) ? target : null,
     };
   },
   async generateNightAction(req) {
     const { t1, t2 } = pickNightTarget(req);
     return {
-      action: t1 ? "night" : "skip",
+      action: t1 ? (req.kind === "hunterShot" ? "hunterShot" : "night") : "skip",
       text: "",
       targetId: t1,
       target2Id: t2,
-      confidence: 0.6,
-      reasoningSummary: "Heuristic night target.",
+      confidence: 0.4 + Math.random() * 0.35,
+      reasoningSummary: req.view.memory?.privateHunch ?? "Heuristic night target.",
     };
   },
   async generateVote(req) {
@@ -166,13 +256,13 @@ export const fallbackProvider: AIProvider = {
       text: "",
       targetId: target,
       target2Id: null,
-      confidence: 0.58,
-      reasoningSummary: "Highest suspicion among legal votes.",
+      confidence: 0.38 + Math.random() * 0.4,
+      reasoningSummary: "Softmax over private hunches, not first-in-list.",
       intendedVoteId: target,
     };
   },
   async summarizeMemory(_view: PlayerView, memory: NpcMemory) {
-    return memory.strategicSummary;
+    return memory.strategicSummary || memory.privateHunch;
   },
 };
 
