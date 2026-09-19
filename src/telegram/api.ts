@@ -5,7 +5,7 @@ export class TelegramApi {
   private token: string;
   private fetchFn: typeof fetch;
 
-  constructor(token: string, fetchFn: typeof fetch = fetch) {
+  constructor(token: string, fetchFn: typeof fetch = (input, init) => globalThis.fetch(input, init)) {
     this.token = token;
     this.fetchFn = fetchFn;
   }
