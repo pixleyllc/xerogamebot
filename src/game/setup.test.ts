@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { assignRoles, classicRoles, createGame, validateRoleDistribution, wolfCountFor } from "@/game/setup.ts";
 import { createRng } from "@/game/rng.ts";
+import { NPC_NAME_POOL } from "@/game/names.ts";
 import { PLAYER_COUNTS, type PlayerCount, type RoleId } from "@/game/types.ts";
 
 describe("role assignment", () => {
@@ -61,5 +62,24 @@ describe("role assignment", () => {
     const names = new Set(g.players.map((p) => p.name));
     assert.equal(names.size, 10);
     assert.equal(Object.keys(g.memories).length, 10);
+  });
+
+  it("keeps a thousand unique village names", () => {
+    assert.equal(NPC_NAME_POOL.length, 1000);
+    assert.equal(new Set(NPC_NAME_POOL.map((n) => n.toLowerCase())).size, 1000);
+  });
+
+  it("two live tables almost never deal the same NPC roster", () => {
+    const roster = (g: ReturnType<typeof createGame>) =>
+      g.players
+        .filter((p) => !p.isHuman)
+        .map((p) => p.name)
+        .sort()
+        .join("|");
+    const seen = new Set<string>();
+    for (let i = 0; i < 12; i++) {
+      seen.add(roster(createGame({ playerCount: 10, humanName: "Zack" })));
+    }
+    assert.equal(seen.size, 12);
   });
 });

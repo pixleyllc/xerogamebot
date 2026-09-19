@@ -398,14 +398,14 @@ export function createGame(options: CreateGameOptions = {}): GameState {
     roles.length = 0;
     roles.push(...reshuffled);
   }
+  const humanName = (options.humanName ?? HUMAN_DEFAULT_NAME).trim() || HUMAN_DEFAULT_NAME;
   const npcNames =
-    options.forcedNpcNames ?? pickNpcNames(playerCount - 1, rng);
+    options.forcedNpcNames ?? pickNpcNames(playerCount - 1, rng, humanName);
   if (npcNames.length !== playerCount - 1) {
     throw new Error("NPC name count mismatch");
   }
 
   const takenMinds = new Set<string>();
-  const humanName = (options.humanName ?? HUMAN_DEFAULT_NAME).trim() || HUMAN_DEFAULT_NAME;
   const players: PlayerState[] = [];
   players.push(
     makePlayer(
