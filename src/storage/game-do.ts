@@ -34,6 +34,22 @@ export class GameDurableObject {
     const url = new URL(request.url);
     const record = await this.load();
 
+    if (url.pathname.endsWith("/debug")) {
+      if (request.method === "PUT") {
+        const body = await request.json().catch(() => null);
+        await this.ctx.storage.put("debug", body);
+        return new Response("ok");
+      }
+      const debug = (await this.ctx.storage.get("debug")) ?? record.lastDebug ?? null;
+      return Response.json({
+        debug,
+        lastUpdateId: record.lastUpdateId,
+        pending: record.pendingMessages.length,
+        owner: record.ownerTelegramId,
+        lastError: record.lastDebug?.error ?? null,
+      });
+    }
+
     if (url.pathname.endsWith("/alarm-flush") || request.headers.get("x-do-alarm") === "1") {
       const api = new TelegramApi(this.env.TELEGRAM_BOT_TOKEN);
       await flushQueue(record, api);
@@ -54,8 +70,16 @@ export class GameDurableObject {
 
     const api = new TelegramApi(this.env.TELEGRAM_BOT_TOKEN);
     try {
+      const text = update.message?.text ?? update.callback_query?.data ?? "";
+      record.lastDebug = { at: Date.now(), text, updateId: update.update_id };
       await handleUpdate(record, this.sessionEnv(), api, update);
     } catch (err) {
+      record.lastDebug = {
+        at: Date.now(),
+        error: String(err),
+        text: update.message?.text ?? update.callback_query?.data,
+        updateId: update.update_id,
+      };
       log("error", "handleUpdate failed", { err: String(err) });
     }
     await this.save();

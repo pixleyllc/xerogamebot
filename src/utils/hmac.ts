@@ -42,24 +42,24 @@ export interface CallbackPayload {
   target2Id?: string;
 }
 
+/** Compact signed callback_data. Telegram hard-limits this to 64 bytes. */
 export async function encodeCallback(
   payload: CallbackPayload,
   secret: string,
 ): Promise<string> {
-  const body = JSON.stringify(payload);
-  const sig = (await signPayload(body, secret)).slice(0, 16);
-  const packed = `${sig}.${btoa(unescape(encodeURIComponent(body)))}`;
-  if (packed.length <= 64) return packed;
-  const short: CallbackPayload = {
-    gameId: payload.gameId.slice(-10),
-    userId: payload.userId,
-    action: payload.action,
-    targetId: payload.targetId,
-    target2Id: payload.target2Id,
-  };
-  const body2 = JSON.stringify(short);
-  const sig2 = (await signPayload(body2, secret)).slice(0, 16);
-  return `${sig2}.${btoa(unescape(encodeURIComponent(body2)))}`;
+  const body = [
+    payload.action,
+    String(payload.userId),
+    payload.gameId.slice(-10),
+    payload.targetId ?? "",
+    payload.target2Id ?? "",
+  ].join("|");
+  const sig = (await signPayload(body, secret)).slice(0, 8);
+  const packed = `${sig}|${body}`;
+  if (packed.length > 64) {
+    throw new Error(`callback_data ${packed.length} bytes exceeds Telegram's 64-byte limit`);
+  }
+  return packed;
 }
 
 export async function decodeCallback(
@@ -67,23 +67,20 @@ export async function decodeCallback(
   secret: string,
   userId: number,
 ): Promise<CallbackPayload | null> {
-  const dot = data.indexOf(".");
-  if (dot < 0) return null;
-  const sig = data.slice(0, dot);
-  const raw = data.slice(dot + 1);
-  let json: string;
-  try {
-    json = decodeURIComponent(escape(atob(raw)));
-  } catch {
-    return null;
-  }
-  const expected = (await signPayload(json, secret)).slice(0, 16);
+  const parts = data.split("|");
+  if (parts.length !== 6) return null;
+  const [sig, action, uid, gameId, targetId, target2Id] = parts;
+  if (!sig || !action || !uid || gameId === undefined) return null;
+  const body = [action, uid, gameId, targetId ?? "", target2Id ?? ""].join("|");
+  const expected = (await signPayload(body, secret)).slice(0, 8);
   if (expected !== sig) return null;
-  try {
-    const parsed = JSON.parse(json) as CallbackPayload;
-    if (parsed.userId !== userId) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
+  const parsedUser = Number(uid);
+  if (parsedUser !== userId) return null;
+  return {
+    gameId,
+    userId: parsedUser,
+    action,
+    targetId: targetId || undefined,
+    target2Id: target2Id || undefined,
+  };
 }

@@ -10,6 +10,7 @@ export interface GameRecord {
   draftSettings: Partial<GameSettings>;
   createdAt: number;
   cupidFirstId: string | null;
+  lastDebug?: { at: number; error?: string; text?: string; updateId?: number };
 }
 
 export interface QueuedMessage {

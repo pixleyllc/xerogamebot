@@ -45,6 +45,14 @@ export async function routeTelegramWebhook(
     hasCallback: Boolean(update.callback_query),
   });
 
+  const summary = {
+    at: Date.now(),
+    updateId: update.update_id,
+    from,
+    text: update.message?.text ?? null,
+    hasCallback: Boolean(update.callback_query),
+  };
+
   const id = env.GAME.idFromName(`user:${from}`);
   const stub = env.GAME.get(id);
   try {
@@ -56,8 +64,24 @@ export async function routeTelegramWebhook(
     if (!res.ok) {
       log("error", "durable object returned non-ok", { status: res.status });
     }
+    const ops = env.GAME.get(env.GAME.idFromName("ops:last"));
+    await ops.fetch(new Request("https://do/debug", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...summary, doStatus: res.status }),
+    }));
   } catch (err) {
     log("error", "durable object fetch failed", { err: String(err) });
+    try {
+      const ops = env.GAME.get(env.GAME.idFromName("ops:last"));
+      await ops.fetch(new Request("https://do/debug", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ...summary, error: String(err) }),
+      }));
+    } catch {
+      /* ignore debug write */
+    }
     return new Response("ok");
   }
   return new Response("ok");

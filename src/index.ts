@@ -35,10 +35,19 @@ export default {
 
     if (url.pathname === "/health") {
       let telegram: unknown = null;
+      let last: unknown = null;
       try {
         telegram = await ensureTelegramWebhook(env, url.origin);
       } catch (err) {
         telegram = { ok: false, error: String(err) };
+      }
+      try {
+        const res = await env.GAME.get(env.GAME.idFromName("ops:last")).fetch(
+          new Request("https://do/debug"),
+        );
+        last = await res.json().catch(() => null);
+      } catch (err) {
+        last = { error: String(err) };
       }
       return Response.json({
         ok: true,
@@ -47,6 +56,7 @@ export default {
         hasToken: Boolean(env.TELEGRAM_BOT_TOKEN),
         hasWebhookSecret: Boolean(env.TELEGRAM_WEBHOOK_SECRET),
         telegram,
+        last,
       });
     }
 

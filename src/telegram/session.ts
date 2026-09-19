@@ -101,6 +101,13 @@ export async function flushQueue(record: GameRecord, api: TelegramApi) {
       await sleep(40);
     } catch (err) {
       log("warn", "send failed", { err: String(err) });
+      const why = String(err);
+      if (/BUTTON_DATA_INVALID|reply_markup/i.test(why) && m.keyboard) {
+        m.keyboard = undefined;
+        m.sendAt = Date.now();
+        record.pendingMessages.push(m);
+        continue;
+      }
       m.sendAt = Date.now() + 1500;
       record.pendingMessages.push(m);
     }
@@ -112,8 +119,13 @@ function displayName(msgFrom: { first_name: string; last_name?: string; username
 }
 
 async function sendHome(record: GameRecord, env: SessionEnv, chatId: number, userId: number) {
-  const kb = await menuKeyboard(secret(env), userId, record.state?.id ?? "lobby");
-  enqueue(record, chatId, START_TEXT, { keyboard: kb });
+  try {
+    const kb = await menuKeyboard(secret(env), userId, record.state?.id ?? "lobby");
+    enqueue(record, chatId, START_TEXT, { keyboard: kb });
+  } catch (err) {
+    log("error", "menu keyboard failed", { err: String(err) });
+    enqueue(record, chatId, START_TEXT);
+  }
 }
 
 async function promptIfNeeded(record: GameRecord, env: SessionEnv, chatId: number, userId: number) {
