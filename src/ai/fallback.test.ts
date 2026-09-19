@@ -20,6 +20,7 @@ describe("AI fallback", () => {
     });
     assert.ok(decision.targetId);
     assert.ok(valid.includes(decision.targetId));
+    assert.equal(decision.text, "");
   });
 
   it("parses messy JSON from an LLM", () => {
@@ -34,6 +35,7 @@ describe("AI fallback", () => {
     );
     assert.equal(parsed.targetId, "npc-2");
     assert.equal(parsed.action, "vote");
+    assert.equal(parsed.text, "");
   });
 
   it("falls back when JSON is garbage", () => {

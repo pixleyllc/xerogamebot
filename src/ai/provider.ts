@@ -113,7 +113,12 @@ export function parseDecisionJson(raw: string, req: AiDecisionRequest): AiDecisi
       null;
     const intended = resolveTargetId(parsed.intendedVoteId, req) ?? target;
     const accused = resolveTargetId(parsed.accusationTargetId, req);
-    const text = typeof parsed.text === "string" ? parsed.text.slice(0, 280).trim() : "";
+    const text =
+      req.kind === "vote"
+        ? ""
+        : typeof parsed.text === "string"
+          ? parsed.text.slice(0, 280).trim()
+          : "";
     return {
       action: parsed.action ?? defaultDecision(req).action,
       text,
@@ -305,7 +310,7 @@ function defensePrompt(req: AiDecisionRequest) {
 
 function votePrompt(req: AiDecisionRequest) {
   return {
-    system: `${identityBlock(req.view)}\nChoose who to vote to lynch. Do not default to the first id. Use your private hunch.\n${uniquenessBlock(req)}\n${jsonContract("action=vote. targetId is required and must be a roster id.")}`,
+    system: `${identityBlock(req.view)}\nCast a silent lynch vote. Do not speak, narrate, or justify. text MUST be an empty string.\nDo not default to the first id. Use your private hunch.\n${jsonContract("action=vote. targetId is required and must be a roster id. text must be \"\".")}`,
     user: `${rosterBlock(req.view)}\nValid vote ids: ${req.validTargets.join(", ")}\n${knowledgeBlock(req.view)}`,
   };
 }

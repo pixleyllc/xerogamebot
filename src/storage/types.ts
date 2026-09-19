@@ -21,6 +21,7 @@ export interface QueuedMessage {
   keyboard?: unknown;
   sendAt: number;
   kind: "public" | "private";
+  fromPlayerId?: string | null;
 }
 
 export const EMPTY_RECORD = (ownerTelegramId: number): GameRecord => ({

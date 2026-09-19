@@ -97,7 +97,7 @@ export async function runNpcNight(state: GameState, provider: AIProvider): Promi
   return latest;
 }
 
-export async function runNpcVotes(state: GameState, provider: AIProvider): Promise<EngineResult> {
+export async function runNpcVotes(state: GameState, _provider: AIProvider): Promise<EngineResult> {
   let latest = emptyResult(state);
   const missing = playersMissingVote(state).filter((p) => !p.isHuman);
   for (const actor of missing) {
@@ -105,9 +105,9 @@ export async function runNpcVotes(state: GameState, provider: AIProvider): Promi
     const view = buildPrivateView(latest.state, actor.id);
     const valid = validVoteTargets(latest.state, actor.id);
     const req: AiDecisionRequest = { kind: "vote", view, validTargets: valid, entropyNonce: uniqueNonce() };
-    const decision = await safeDecision(provider, req).catch(() =>
-      fallbackProvider.generateVote(req),
-    );
+    // Silent ballot — never ask a model to write a line. Repeat-prone vote
+    // speeches were drowning the table; hunches from discussion already exist.
+    const decision = await fallbackProvider.generateVote(req);
     const target =
       (decision.targetId && valid.includes(decision.targetId) && decision.targetId) ||
       (valid.length ? valid[Math.floor(Math.random() * valid.length)] : undefined);

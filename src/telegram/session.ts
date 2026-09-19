@@ -53,7 +53,7 @@ function enqueue(
   record: GameRecord,
   chatId: number,
   text: string,
-  opts?: { keyboard?: unknown; delayMs?: number; parseMode?: "HTML" },
+  opts?: { keyboard?: unknown; delayMs?: number; parseMode?: "HTML"; fromPlayerId?: string | null },
 ) {
   const msg: QueuedMessage = {
     id: randomId("q"),
@@ -63,12 +63,27 @@ function enqueue(
     keyboard: opts?.keyboard,
     sendAt: Date.now() + (opts?.delayMs ?? 0),
     kind: "public",
+    fromPlayerId: opts?.fromPlayerId ?? null,
   };
   record.pendingMessages.push(msg);
 }
 
+function dropPendingNpcTalk(record: GameRecord) {
+  const humanId = record.state?.humanPlayerId;
+  const npcNames = new Set(
+    (record.state?.players ?? []).filter((p) => !p.isHuman).map((p) => p.name),
+  );
+  record.pendingMessages = record.pendingMessages.filter((m) => {
+    if (m.fromPlayerId && m.fromPlayerId !== humanId) return false;
+    const bold = m.text.match(/^<b>([^<]+)<\/b>\n/);
+    if (bold && npcNames.has(bold[1]!)) return false;
+    return true;
+  });
+}
+
 function enqueueNewChat(record: GameRecord, chatId: number) {
   if (!record.state) return;
+  const voting = record.state.phase === "voting" || record.state.phase === "execution";
   for (const m of record.state.chat) {
     if (record.sentChatIds.includes(m.id)) continue;
     if (m.privateToPlayerId && m.privateToPlayerId !== record.state.humanPlayerId) continue;
@@ -76,12 +91,16 @@ function enqueueNewChat(record: GameRecord, chatId: number) {
     if (record.sentChatIds.length > 400) {
       record.sentChatIds = record.sentChatIds.slice(-400);
     }
+    const isNpcTalk =
+      m.kind === "player" && m.authorId !== record.state.humanPlayerId;
+    if (voting && isNpcTalk) continue;
     const prefix =
       m.kind === "player" || m.kind === "moderator"
         ? `<b>${escapeHtml(m.authorName)}</b>\n`
         : "";
     enqueue(record, chatId, prefix + escapeHtml(m.text), {
       delayMs: m.kind === "player" ? record.state.settings.discussionMessageDelayMs : 0,
+      fromPlayerId: m.kind === "player" ? m.authorId : null,
     });
   }
 }
@@ -142,6 +161,9 @@ async function afterEngine(record: GameRecord, env: SessionEnv, chatId: number, 
     record.state = await driveNpcsUntilHuman(record.state, { provider });
   } catch (err) {
     log("error", "npc drive failed", { err: String(err) });
+  }
+  if (record.state.phase === "voting" || record.state.phase === "execution") {
+    dropPendingNpcTalk(record);
   }
   enqueueNewChat(record, chatId);
   await promptIfNeeded(record, env, chatId, userId);
