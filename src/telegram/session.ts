@@ -10,6 +10,7 @@ import type { GameRecord, QueuedMessage } from "@/storage/types.ts";
 import type { TelegramApi } from "@/telegram/api.ts";
 import type { TelegramCallbackQuery, TelegramMessage, TelegramUpdate } from "@/telegram/types.ts";
 import {
+  escapeHtml,
   formatHelp,
   formatLiving,
   formatPrompt,
@@ -77,9 +78,9 @@ function enqueueNewChat(record: GameRecord, chatId: number) {
     }
     const prefix =
       m.kind === "player" || m.kind === "moderator"
-        ? `<b>${escape(m.authorName)}</b>\n`
+        ? `<b>${escapeHtml(m.authorName)}</b>\n`
         : "";
-    enqueue(record, chatId, prefix + escape(m.text), {
+    enqueue(record, chatId, prefix + escapeHtml(m.text), {
       delayMs: m.kind === "player" ? record.state.settings.discussionMessageDelayMs : 0,
     });
   }
@@ -132,10 +133,6 @@ async function afterEngine(record: GameRecord, env: SessionEnv, chatId: number, 
   }
   enqueueNewChat(record, chatId);
   await promptIfNeeded(record, env, chatId, userId);
-}
-
-function escape(text: string): string {
-  return text.replace(/&/g, "&").replace(/</g, "<").replace(/>/g, ">");
 }
 
 async function startNewGame(
@@ -246,7 +243,7 @@ async function handleMessage(record: GameRecord, env: SessionEnv, msg: TelegramM
       return;
     }
     const view = buildPrivateView(record.state, record.state.humanPlayerId);
-    enqueue(record, chatId, escape(roleCardText(view)));
+    enqueue(record, chatId, escapeHtml(roleCardText(view)));
     return;
   }
   if (command === "/say") {
@@ -390,7 +387,7 @@ async function handleCallback(
   }
   if (action === "game:role") {
     const view = buildPrivateView(record.state, record.state.humanPlayerId);
-    enqueue(record, chatId, escape(roleCardText(view)));
+    enqueue(record, chatId, escapeHtml(roleCardText(view)));
     return;
   }
   if (action === "game:history") {

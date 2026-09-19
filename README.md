@@ -84,7 +84,7 @@ npm i -g wrangler
 npx wrangler login
 ```
 
-Create a Worker project from this repo (`wrangler.jsonc` is already here). Durable Objects and a Workers AI binding are declared in that file.
+The Worker name in `wrangler.jsonc` is **xerogamebot** — it must match the Cloudflare Worker you put `TELEGRAM_*` secrets on. Durable Objects and a Workers AI binding are already declared in that file. Observability (logs + traces) is enabled so the dashboard stays in sync with deploys.
 
 ---
 
@@ -273,6 +273,9 @@ Wire it in `createProviderFromEnv` (`src/ai/index.ts`). Wrap with `withFallback`
 | Game stuck at night | Human still has a night action; tap the target keyboard or `/night` |
 | Typecheck / tests fail | `npm test` uses `scripts/alias-register.mjs` so `@/` resolves under `node:test` |
 | Worker cannot find DO | Confirm `wrangler.jsonc` class name `GameDurableObject` exported from `src/index.ts` |
+| Orange observability banner | `wrangler.jsonc` now sets `observability.enabled: true`. Redeploy so dashboard Logs/Traces match |
+| Deploy workflow fails on `npm ci` | Worker deploy no longer runs `npm ci`. Needs GitHub secrets `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID` |
+| Bot still silent after deploy | POST `/telegram/setup` with `Authorization: Bearer <TELEGRAM_WEBHOOK_SECRET>` to register the webhook |
 
 ---
 

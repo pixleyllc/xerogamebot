@@ -63,6 +63,17 @@ export class TelegramApi {
   getMe() {
     return this.call<{ id: number; username: string; first_name: string }>("getMe");
   }
+
+  getWebhookInfo() {
+    return this.call<{
+      url: string;
+      pending_update_count: number;
+      last_error_date?: number;
+      last_error_message?: string;
+      max_connections?: number;
+      allowed_updates?: string[];
+    }>("getWebhookInfo");
+  }
 }
 
 export function chunkButtons(

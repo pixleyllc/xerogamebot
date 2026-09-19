@@ -5,9 +5,9 @@ import { livingPlayers } from "@/roles/index.ts";
 
 export function escapeHtml(text: string): string {
   return text
-    .replace(/&/g, "&")
-    .replace(/</g, "<")
-    .replace(/>/g, ">");
+    .replace(/&/g, "\u0026amp;")
+    .replace(/</g, "\u0026lt;")
+    .replace(/>/g, "\u0026gt;");
 }
 
 export function formatPrompt(prompt: HumanPrompt): string {
