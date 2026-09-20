@@ -314,11 +314,8 @@ export function applyEngineAction(state: GameState, action: EngineAction): Engin
 
   if (action.type === "say") {
     if (!actor.isAlive) return result(state, ["The dead cannot speak."]);
-    if (state.phase === "voting" && !actor.isHuman) {
-      return result(state, ["NPCs do not speak during the vote."]);
-    }
-    if (!actor.isHuman && state.phase !== "discussion") {
-      return result(state, ["NPCs only speak during discussion."]);
+    if (!actor.isHuman) {
+      return result(state, ["NPCs do not speak."]);
     }
     if (state.phase !== "discussion" && state.phase !== "day" && state.phase !== "voting") {
       return result(state, ["You can only speak during the day."]);

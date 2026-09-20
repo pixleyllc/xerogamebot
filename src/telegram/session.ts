@@ -81,15 +81,9 @@ function dropPendingNpcTalk(record: GameRecord) {
   });
 }
 
-function resolvedDayEnd(from: Phase, to: Phase): boolean {
-  if (from === "voting" || from === "execution" || from === "hunterShot") return true;
-  if (from === "discussion" && to !== "discussion") return true;
-  return false;
-}
-
-function enqueueNewChat(record: GameRecord, chatId: number, opts?: { muteNpcTalk?: boolean }) {
+function enqueueNewChat(record: GameRecord, chatId: number) {
   if (!record.state) return;
-  const allowNpc = record.state.phase === "discussion" && !opts?.muteNpcTalk;
+  dropPendingNpcTalk(record);
   for (const m of record.state.chat) {
     if (record.sentChatIds.includes(m.id)) continue;
     if (m.privateToPlayerId && m.privateToPlayerId !== record.state.humanPlayerId) continue;
@@ -99,22 +93,20 @@ function enqueueNewChat(record: GameRecord, chatId: number, opts?: { muteNpcTalk
     }
     const isNpcTalk =
       m.kind === "player" && m.authorId !== record.state.humanPlayerId;
-    if (isNpcTalk && !allowNpc) continue;
+    if (isNpcTalk) continue;
     const prefix =
       m.kind === "player" || m.kind === "moderator"
         ? `<b>${escapeHtml(m.authorName)}</b>\n`
         : "";
     enqueue(record, chatId, prefix + escapeHtml(m.text), {
-      delayMs: m.kind === "player" ? record.state.settings.discussionMessageDelayMs : 0,
+      delayMs: 0,
       fromPlayerId: m.kind === "player" ? m.authorId : null,
     });
   }
 }
 
 export async function flushQueue(record: GameRecord, api: TelegramApi) {
-  if (record.state && record.state.phase !== "discussion") {
-    dropPendingNpcTalk(record);
-  }
+  dropPendingNpcTalk(record);
   const now = Date.now();
   const ready = record.pendingMessages.filter((m) => m.sendAt <= now);
   record.pendingMessages = record.pendingMessages.filter((m) => m.sendAt > now);
@@ -178,10 +170,8 @@ async function afterEngine(
   } catch (err) {
     log("error", "npc drive failed", { err: String(err) });
   }
-  const to = record.state.phase;
-  const muteNpcTalk = resolvedDayEnd(from, to) || to !== "discussion";
-  if (muteNpcTalk) dropPendingNpcTalk(record);
-  enqueueNewChat(record, chatId, { muteNpcTalk });
+  dropPendingNpcTalk(record);
+  enqueueNewChat(record, chatId);
   await promptIfNeeded(record, env, chatId, userId);
 }
 

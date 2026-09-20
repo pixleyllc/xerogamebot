@@ -97,7 +97,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   discussionTimeoutMs: 120_000,
   voteTimeoutMs: 60_000,
   hunterShotTimeoutMs: 45_000,
-  maxDiscussionMessages: 5,
+  maxDiscussionMessages: 0,
 };
 
 export interface Personality {

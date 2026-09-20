@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import { createGame } from "@/game/setup.ts";
 import { startGame } from "@/game/engine.ts";
 import { fallbackProvider } from "@/ai/fallback.ts";
-import { runNpcDiscussion } from "@/ai/npc-engine.ts";
-import { fingerprint } from "@/ai/spice.ts";
+import { driveNpcsUntilHuman, runNpcDiscussion } from "@/ai/npc-engine.ts";
 import type { RoleId } from "@/game/types.ts";
 
 describe("live entropy", () => {
@@ -42,7 +41,7 @@ describe("live entropy", () => {
     assert.ok(distinct.size >= 3, "beliefs were not jittered");
   });
 
-  it("discussion lines are not clones of each other", async () => {
+  it("NPCs never produce discussion lines", async () => {
     let state = startGame(createGame({ playerCount: 10, seed: "talk-apart", humanName: "Zack" })).state;
     if (state.phase === "night" && state.waitingForHuman) {
       const { applyEngineAction } = await import("@/game/engine.ts");
@@ -54,13 +53,9 @@ describe("live entropy", () => {
         target2Id: state.humanPrompt?.targets[1]?.id,
       }).state;
     }
-    const { driveNpcsUntilHuman } = await import("@/ai/npc-engine.ts");
     state = await driveNpcsUntilHuman(state, { provider: fallbackProvider, openingSpeakers: 5 });
-    if (state.phase === "discussion" && state.chat.filter((m) => m.kind === "player").length < 3) {
-      state = (await runNpcDiscussion(state, { provider: fallbackProvider, maxSpeakers: 5 })).state;
-    }
-    const lines = state.chat.filter((m) => m.kind === "player").map((m) => fingerprint(m.text));
-    assert.ok(lines.length >= 3, "expected several NPC lines");
-    assert.equal(new Set(lines).size, lines.length, `duplicate NPC lines: ${lines.join(" || ")}`);
+    state = (await runNpcDiscussion(state, { provider: fallbackProvider, maxSpeakers: 5 })).state;
+    const lines = state.chat.filter((m) => m.kind === "player" && m.authorId !== state.humanPlayerId);
+    assert.equal(lines.length, 0);
   });
 });

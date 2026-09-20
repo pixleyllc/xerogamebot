@@ -42,7 +42,7 @@ describe("driveNpcsUntilHuman", () => {
     }
     assert.equal(state.phase, "discussion");
     const npcLines = state.chat.filter((m) => m.kind === "player" && m.authorId !== state.humanPlayerId);
-    assert.ok(npcLines.length >= 2, "NPCs must speak during discussion");
+    assert.equal(npcLines.length, 0, "NPCs must never speak");
     assert.equal(state.waitingForHuman, true);
   });
 
@@ -134,11 +134,11 @@ describe("driveNpcsUntilHuman", () => {
     assert.ok(state.players.filter((p) => !p.isHuman && p.isAlive).every((p) => p.voteTargetId));
   });
 
-  it("does not open village chatter after a vote or the end-of-day report", async () => {
+  it("never produces NPC discussion lines", async () => {
     let state = createGame({
       playerCount: 8,
       mode: "classic",
-      seed: "quiet-report",
+      seed: "mute-village",
       humanName: "Zack",
       forcedRoles: [
         "villager",
@@ -157,36 +157,22 @@ describe("driveNpcsUntilHuman", () => {
       p.hasUsedNightAction = true;
     }
     state = beginDiscussion(state).state;
-    state = await driveNpcsUntilHuman(state, { provider: fallbackProvider });
+    state = await driveNpcsUntilHuman(state, { provider: fallbackProvider, openingSpeakers: 9 });
     assert.equal(state.phase, "discussion");
-    const npcTalkDuringDay = state.chat.filter(
-      (m) => m.kind === "player" && m.authorId !== state.humanPlayerId,
-    ).length;
-    assert.ok(npcTalkDuringDay >= 1);
-
-    state = applyEngineAction(state, { type: "advance", actorId: state.humanPlayerId }).state;
-    state = await driveNpcsUntilHuman(state, { provider: fallbackProvider, startedPhase: "discussion" });
-    assert.equal(state.phase, "voting");
     assert.equal(
       state.chat.filter((m) => m.kind === "player" && m.authorId !== state.humanPlayerId).length,
-      npcTalkDuringDay,
-      "calling the vote must not add NPC speeches",
+      0,
     );
-
-    const voteFor = state.humanPrompt!.targets[0]!.id;
-    state = applyEngineAction(state, {
-      type: "vote",
-      actorId: state.humanPlayerId,
-      targetId: voteFor,
-    }).state;
-    state = await driveNpcsUntilHuman(state, { provider: fallbackProvider, startedPhase: "voting" });
+    const npc = state.players.find((p) => !p.isHuman)!;
+    const blocked = applyEngineAction(state, {
+      type: "say",
+      actorId: npc.id,
+      text: "Anyone else smell a wolf?",
+    });
+    assert.ok(blocked.errors.length >= 1);
     assert.equal(
-      state.chat.filter((m) => m.kind === "player" && m.authorId !== state.humanPlayerId).length,
-      npcTalkDuringDay,
-      "the lynch report and next night must not mix in NPC discussion",
-    );
-    assert.ok(
-      state.chat.some((m) => m.kind === "moderator" && /vote is open|executes|wastes the day|tied/i.test(m.text)),
+      blocked.state.chat.filter((m) => m.kind === "player" && m.authorId !== state.humanPlayerId).length,
+      0,
     );
   });
 });

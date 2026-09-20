@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createGame } from "@/game/setup.ts";
-import { applyEngineAction, beginDiscussion, startGame } from "@/game/engine.ts";
+import { beginDiscussion, startGame } from "@/game/engine.ts";
 import { EMPTY_RECORD } from "@/storage/types.ts";
 import { flushQueue, handleUpdate, type SessionEnv } from "@/telegram/session.ts";
 import type { TelegramApi } from "@/telegram/api.ts";
@@ -81,11 +81,6 @@ describe("telegram silence during vote and day-end report", () => {
     }
     state = beginDiscussion(state).state;
     const npc = state.players.find((p) => !p.isHuman)!;
-    state = applyEngineAction(state, {
-      type: "say",
-      actorId: npc.id,
-      text: "Lynch them before the report.",
-    }).state;
     record.state = state;
     record.pendingMessages.push({
       id: "q-late",
@@ -161,6 +156,7 @@ describe("telegram silence during vote and day-end report", () => {
       "discussion leftover must not leak into the report",
     );
     assert.ok(record.state?.phase !== "voting");
+    assert.equal(sentNpcTalk(api, names).length, 0);
   });
 
   it("flushQueue never delivers NPC talk outside discussion", async () => {
