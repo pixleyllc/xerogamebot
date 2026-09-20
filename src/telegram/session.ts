@@ -4,7 +4,7 @@ import { buildPrivateView, roleCardText } from "@/game/isolation.ts";
 import { driveNpcsUntilHuman } from "@/ai/npc-engine.ts";
 import { createProviderFromEnv, withFallback, type ProviderEnv } from "@/ai/index.ts";
 import { BOT_NAME } from "@/brand.ts";
-import type { PlayerCount } from "@/game/types.ts";
+import type { PlayerCount, Phase } from "@/game/types.ts";
 import { PLAYER_COUNTS } from "@/game/types.ts";
 import type { GameRecord, QueuedMessage } from "@/storage/types.ts";
 import type { TelegramApi } from "@/telegram/api.ts";
@@ -81,9 +81,15 @@ function dropPendingNpcTalk(record: GameRecord) {
   });
 }
 
-function enqueueNewChat(record: GameRecord, chatId: number) {
+function resolvedDayEnd(from: Phase, to: Phase): boolean {
+  if (from === "voting" || from === "execution" || from === "hunterShot") return true;
+  if (from === "discussion" && to !== "discussion") return true;
+  return false;
+}
+
+function enqueueNewChat(record: GameRecord, chatId: number, opts?: { muteNpcTalk?: boolean }) {
   if (!record.state) return;
-  const voting = record.state.phase === "voting" || record.state.phase === "execution";
+  const allowNpc = record.state.phase === "discussion" && !opts?.muteNpcTalk;
   for (const m of record.state.chat) {
     if (record.sentChatIds.includes(m.id)) continue;
     if (m.privateToPlayerId && m.privateToPlayerId !== record.state.humanPlayerId) continue;
@@ -93,7 +99,7 @@ function enqueueNewChat(record: GameRecord, chatId: number) {
     }
     const isNpcTalk =
       m.kind === "player" && m.authorId !== record.state.humanPlayerId;
-    if (voting && isNpcTalk) continue;
+    if (isNpcTalk && !allowNpc) continue;
     const prefix =
       m.kind === "player" || m.kind === "moderator"
         ? `<b>${escapeHtml(m.authorName)}</b>\n`
@@ -106,6 +112,9 @@ function enqueueNewChat(record: GameRecord, chatId: number) {
 }
 
 export async function flushQueue(record: GameRecord, api: TelegramApi) {
+  if (record.state && record.state.phase !== "discussion") {
+    dropPendingNpcTalk(record);
+  }
   const now = Date.now();
   const ready = record.pendingMessages.filter((m) => m.sendAt <= now);
   record.pendingMessages = record.pendingMessages.filter((m) => m.sendAt > now);
@@ -154,18 +163,25 @@ async function promptIfNeeded(record: GameRecord, env: SessionEnv, chatId: numbe
   enqueue(record, chatId, formatPrompt(state.humanPrompt), { keyboard: kb });
 }
 
-async function afterEngine(record: GameRecord, env: SessionEnv, chatId: number, userId: number) {
+async function afterEngine(
+  record: GameRecord,
+  env: SessionEnv,
+  chatId: number,
+  userId: number,
+  fromPhase?: Phase,
+) {
   if (!record.state) return;
+  const from = fromPhase ?? record.state.phase;
   const provider = withFallback(createProviderFromEnv(env));
   try {
-    record.state = await driveNpcsUntilHuman(record.state, { provider });
+    record.state = await driveNpcsUntilHuman(record.state, { provider, startedPhase: from });
   } catch (err) {
     log("error", "npc drive failed", { err: String(err) });
   }
-  if (record.state.phase === "voting" || record.state.phase === "execution") {
-    dropPendingNpcTalk(record);
-  }
-  enqueueNewChat(record, chatId);
+  const to = record.state.phase;
+  const muteNpcTalk = resolvedDayEnd(from, to) || to !== "discussion";
+  if (muteNpcTalk) dropPendingNpcTalk(record);
+  enqueueNewChat(record, chatId, { muteNpcTalk });
   await promptIfNeeded(record, env, chatId, userId);
 }
 
@@ -292,7 +308,7 @@ async function handleMessage(record: GameRecord, env: SessionEnv, msg: TelegramM
       actorId: record.state.humanPlayerId,
       text: said,
     });
-    await afterEngine(record, env, chatId, userId);
+    await afterEngine(record, env, chatId, userId, "discussion");
     return;
   }
   if (command === "/vote" || command === "/night") {
@@ -312,7 +328,7 @@ async function handleMessage(record: GameRecord, env: SessionEnv, msg: TelegramM
       actorId: record.state.humanPlayerId,
       text,
     });
-    await afterEngine(record, env, chatId, userId);
+    await afterEngine(record, env, chatId, userId, "discussion");
     return;
   }
 
@@ -431,15 +447,17 @@ async function handleCallback(
   }
 
   if (action === "skip") {
+    const fromPhase = record.state.phase;
     applyEngineAction(record.state, {
       type: record.state.phase === "discussion" ? "advance" : "skip",
       actorId: record.state.humanPlayerId,
     });
-    await afterEngine(record, env, chatId, userId);
+    await afterEngine(record, env, chatId, userId, fromPhase);
     return;
   }
 
   if (action.startsWith("pick:") && targetId) {
+    const fromPhase = record.state.phase;
     const kind = action.slice("pick:".length);
     if (kind === "cupid") {
       if (!record.cupidFirstId) {
@@ -479,6 +497,6 @@ async function handleCallback(
         actorId: record.state.humanPlayerId,
       });
     }
-    await afterEngine(record, env, chatId, userId);
+    await afterEngine(record, env, chatId, userId, fromPhase);
   }
 }

@@ -9,7 +9,7 @@ import { withFallback, type AIProvider } from "@/ai/index.ts";
 import { driveNpcsUntilHuman } from "@/ai/npc-engine.ts";
 import { generateNpcDecision } from "@/lib/npc-ai.ts";
 import type { AiDecisionRequest } from "@/ai/provider.ts";
-import type { GameMode, GameState, PlayerCount, PlayerView } from "@/game/types.ts";
+import type { GameMode, GameState, Phase, PlayerCount, PlayerView } from "@/game/types.ts";
 
 export type Screen = "lobby" | "table";
 export type SidePanel = "none" | "players" | "role" | "history" | "help";
@@ -72,10 +72,16 @@ function webProvider(useLlm: boolean): AIProvider {
   return withFallback(llm);
 }
 
-async function playNpcs(state: GameState, useLlm: boolean, replies?: number): Promise<GameState> {
+async function playNpcs(
+  state: GameState,
+  useLlm: boolean,
+  replies?: number,
+  startedPhase?: Phase,
+): Promise<GameState> {
   return driveNpcsUntilHuman(state, {
     provider: webProvider(useLlm),
     discussionReplies: replies,
+    startedPhase: startedPhase ?? state.phase,
   });
 }
 
@@ -161,7 +167,7 @@ export const useGameStore = create<GameStore>()(
             text,
           }).state;
           set({ ...snapshot(working), busy: true });
-          working = await playNpcs(working, useLlm, 2);
+          working = await playNpcs(working, useLlm, 2, "discussion");
           set({ ...snapshot(working), busy: false });
         } catch (err) {
           set({
@@ -175,6 +181,7 @@ export const useGameStore = create<GameStore>()(
         const { state, cupidFirstId, useLlm } = get();
         if (!state) return;
         const kind = state.humanPrompt?.kind;
+        const fromPhase = state.phase;
         set({ busy: true, error: null });
         let working = structuredClone(state);
         try {
@@ -213,7 +220,7 @@ export const useGameStore = create<GameStore>()(
             return;
           }
           set({ ...snapshot(working), busy: true });
-          working = await playNpcs(working, useLlm);
+          working = await playNpcs(working, useLlm, undefined, fromPhase);
           set({ ...snapshot(working), busy: false });
         } catch (err) {
           set({
@@ -226,6 +233,7 @@ export const useGameStore = create<GameStore>()(
       async skipOrAdvance() {
         const { state, useLlm } = get();
         if (!state) return;
+        const fromPhase = state.phase;
         set({ busy: true, error: null });
         let working = structuredClone(state);
         try {
@@ -234,7 +242,7 @@ export const useGameStore = create<GameStore>()(
             actorId: working.humanPlayerId,
           }).state;
           set({ ...snapshot(working), busy: true });
-          working = await playNpcs(working, useLlm);
+          working = await playNpcs(working, useLlm, undefined, fromPhase);
           set({ ...snapshot(working), busy: false });
         } catch (err) {
           set({

@@ -244,6 +244,14 @@ export interface DriveUntilHumanOptions {
   discussionReplies?: number;
   /** Opening village chatter. Default settings.maxDiscussionMessages. */
   openingSpeakers?: number;
+  /**
+   * Phase at the start of this human action (before applyEngineAction).
+   * A vote / lynch / hunter shot never opens village chatter in the same turn
+   * as the end-of-day report.
+   */
+  startedPhase?: GameState["phase"];
+  /** Force-skip opening/reply speeches this drive. */
+  skipDiscussion?: boolean;
 }
 
 /**
@@ -256,6 +264,16 @@ export async function driveNpcsUntilHuman(
   options: DriveUntilHumanOptions,
 ): Promise<GameState> {
   const provider = options.provider;
+  const startedPhase = options.startedPhase ?? state.phase;
+  const skipDiscussion =
+    options.skipDiscussion ??
+    (startedPhase === "voting" ||
+      startedPhase === "execution" ||
+      startedPhase === "hunterShot");
+  let passedThroughVote =
+    startedPhase === "voting" ||
+    startedPhase === "execution" ||
+    startedPhase === "hunterShot";
   let current = state;
   let guard = 0;
   while (guard++ < 20 && current.phase !== "gameOver") {
@@ -266,6 +284,7 @@ export async function driveNpcsUntilHuman(
       continue;
     }
     if (current.phase === "discussion") {
+      if (skipDiscussion || passedThroughVote) break;
       const opening = options.openingSpeakers ?? current.settings.maxDiscussionMessages;
       const replies = options.discussionReplies ?? 2;
       const want = current.discussionPlan.length === 0 ? opening : current.discussionPlan.length + replies;
@@ -276,6 +295,7 @@ export async function driveNpcsUntilHuman(
       break;
     }
     if (current.phase === "voting") {
+      passedThroughVote = true;
       current = (await runNpcVotes(current, provider)).state;
       if (current.phase !== "voting") continue;
       if (current.waitingForHuman) break;
